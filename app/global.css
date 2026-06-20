@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+:root {
+  --gis-accent: #14785f;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(20, 120, 95, 0.12), transparent 28rem),
+    hsl(var(--background));
+}
+
+.gis-hero {
+  border: 1px solid hsl(var(--border));
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(20, 120, 95, 0.12), rgba(15, 23, 42, 0.03));
+}
+
+.gis-stat {
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--card));
+}

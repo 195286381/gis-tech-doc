@@ -1,0 +1,39 @@
+---
+title: 空间数据模型
+description: 空间表设计、几何类型约定和数据质量门禁。
+---
+
+空间表应将几何字段、业务字段、审计字段分离设计。几何字段统一命名为 `geom`，并为高频查询字段建立普通索引和空间索引。
+
+```sql
+CREATE TABLE parcels (
+  id BIGSERIAL PRIMARY KEY,
+  parcel_code TEXT NOT NULL UNIQUE,
+  owner_name TEXT,
+  land_use TEXT NOT NULL,
+  area_sqm NUMERIC(14, 2),
+  geom GEOMETRY(MultiPolygon, 4326) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX parcels_geom_gix ON parcels USING GIST (geom);
+CREATE INDEX parcels_land_use_idx ON parcels (land_use);
+```
+
+## 几何类型约定
+
+| 类型 | 用途 | 示例 |
+| --- | --- | --- |
+| Point | 离散位置 | 摄像头、充电桩、门店 |
+| LineString | 线性网络 | 道路、管线、河流 |
+| Polygon | 区域边界 | 地块、行政区、服务范围 |
+
+## 数据质量门禁
+
+| 检查项 | 规则 | 失败处理 |
+| --- | --- | --- |
+| 几何合法性 | `ST_IsValid(geom)` 必须为 true | 进入修复队列，修复失败则退回数据提供方 |
+| 坐标范围 | 经纬度必须落在业务区域边界或允许缓冲范围内 | 标记为异常点，不进入生产图层 |
+| 字段完整性 | 主键、分类、状态、更新时间等必填字段不能为空 | 生成质量报告并阻断发布 |
+| 重复数据 | 业务唯一键不得重复，空间重复率需低于约定阈值 | 保留最新可信版本，其余进入审计表 |

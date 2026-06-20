@@ -1,0 +1,57 @@
+---
+title: 空间查询 API
+description: 空间查询接口、标准 GeoJSON 响应和错误约定。
+---
+
+API 应以业务动作命名，并将空间过滤条件显式化。复杂空间计算放在数据库侧执行，前端只传递边界框、点位或缓冲距离。
+
+## 查询附近资产
+
+```http
+GET /api/assets/nearby?lng=121.4737&lat=31.2304&radius=500
+```
+
+```sql
+SELECT id, name, type,
+       ST_Distance(
+         geom::geography,
+         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+       ) AS distance_m
+FROM assets
+WHERE ST_DWithin(
+  geom::geography,
+  ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+  $3
+)
+ORDER BY distance_m
+LIMIT 100;
+```
+
+## 标准响应
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [121.4737, 31.2304] },
+      "properties": { "id": 1001, "name": "资产 A", "distance_m": 42.7 }
+    }
+  ]
+}
+```
+
+## 错误响应约定
+
+```json
+{
+  "error": {
+    "code": "INVALID_GEOMETRY",
+    "message": "请求范围不是合法 GeoJSON Polygon",
+    "request_id": "req_01J0GIS8N7YK"
+  }
+}
+```
+
+API 必须返回稳定的错误码和 `request_id`。前端展示用户可理解的提示，日志系统使用 `request_id` 追踪服务端异常。
