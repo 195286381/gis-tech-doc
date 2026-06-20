@@ -9,10 +9,7 @@
 ```toml
 [build]
   command = "npm run build"
-  publish = "out"
-
-[build.environment]
-  NETLIFY_NEXT_PLUGIN_SKIP = "true"
+  publish = ".next"
 ```
 
 在 Netlify 项目 `gis-tech-doc` 中连接本仓库：
@@ -20,7 +17,7 @@
 - Repository: `195286381/gis-tech-doc`
 - Branch: `main`
 - Build command: `npm run build`
-- Publish directory: `out`
+- Publish directory: `.next`
 
 连接完成后，每次向 `main` 分支 push，Netlify 会自动重新部署。
 
