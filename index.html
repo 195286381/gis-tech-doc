@@ -20,6 +20,7 @@
         <a href="#architecture">架构</a>
         <a href="#data">数据</a>
         <a href="#api">API</a>
+        <a href="#acceptance">验收</a>
         <a href="#ops">运维</a>
       </nav>
     </header>
@@ -35,8 +36,9 @@
         <a href="#tiles">6. 地图切片服务</a>
         <a href="#api">7. 空间查询 API</a>
         <a href="#performance">8. 性能优化</a>
-        <a href="#security">9. 安全与权限</a>
-        <a href="#ops">10. 部署与运维</a>
+        <a href="#security">8. 安全与权限</a>
+        <a href="#ops">9. 部署与运维</a>
+        <a href="#acceptance">10. 验收清单</a>
       </aside>
 
       <article class="doc">
@@ -53,11 +55,11 @@
             </div>
             <div>
               <span>核心栈</span>
-              <strong>PostGIS、GeoServer、MapLibre、Vercel</strong>
+              <strong>PostGIS、GeoServer、MapLibre、Netlify</strong>
             </div>
             <div>
               <span>文档版本</span>
-              <strong>v1.0 / 2026-06-20</strong>
+              <strong>v1.1 / 2026-06-20</strong>
             </div>
           </div>
         </section>
@@ -75,6 +77,24 @@
             <div>服务层<br /><small>PostGIS / GeoServer / Tile API</small></div>
             <span></span>
             <div>应用层<br /><small>MapLibre / Dashboard / 业务系统</small></div>
+          </div>
+          <h3>架构决策</h3>
+          <div class="decision-grid">
+            <div>
+              <span>ADR-001</span>
+              <strong>空间计算下沉到数据库</strong>
+              <p>距离、包含、相交、缓冲区等查询由 PostGIS 执行，API 层只做参数校验、权限过滤和响应组装。</p>
+            </div>
+            <div>
+              <span>ADR-002</span>
+              <strong>展示优先采用矢量切片</strong>
+              <p>业务图层以 MVT 为主，前端通过样式控制颜色、标签和筛选，降低重复切片与多端适配成本。</p>
+            </div>
+            <div>
+              <span>ADR-003</span>
+              <strong>发布链路分离</strong>
+              <p>文档与前端应用走 Netlify 自动部署，数据库、GeoServer 和对象存储独立发布，减少互相影响。</p>
+            </div>
           </div>
           <h3>关键组件</h3>
           <table>
@@ -124,6 +144,10 @@
 SELECT ST_Transform(geom, 3857) AS web_geom
 FROM asset_points
 WHERE ST_SRID(geom) = 4326;</code></pre>
+          <div class="callout">
+            <strong>坐标验收要求：</strong>
+            每批入库数据必须记录源坐标系、目标坐标系、转换工具和抽样校验结果；抽样点偏差超过业务阈值时不得发布到生产图层。
+          </div>
         </section>
 
         <section id="data">
@@ -171,6 +195,38 @@ CREATE INDEX parcels_land_use_idx ON parcels (land_use);</code></pre>
               </tr>
             </tbody>
           </table>
+          <h3>数据质量门禁</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>检查项</th>
+                <th>规则</th>
+                <th>失败处理</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>几何合法性</td>
+                <td><code>ST_IsValid(geom)</code> 必须为 true。</td>
+                <td>进入修复队列，修复失败则退回数据提供方。</td>
+              </tr>
+              <tr>
+                <td>坐标范围</td>
+                <td>经纬度必须落在业务区域边界或允许缓冲范围内。</td>
+                <td>标记为异常点，不进入生产图层。</td>
+              </tr>
+              <tr>
+                <td>字段完整性</td>
+                <td>主键、分类、状态、更新时间等必填字段不能为空。</td>
+                <td>生成质量报告并阻断发布。</td>
+              </tr>
+              <tr>
+                <td>重复数据</td>
+                <td>业务唯一键不得重复，空间重复率需低于约定阈值。</td>
+                <td>保留最新可信版本，其余进入审计表。</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section id="ingestion">
@@ -185,6 +241,10 @@ CREATE INDEX parcels_land_use_idx ON parcels (land_use);</code></pre>
             <li>写入暂存表，生成质量报告。</li>
             <li>审核通过后合并到生产表，并刷新缓存和切片。</li>
           </ol>
+          <h3>质量报告输出</h3>
+          <p>
+            每次入库应生成可追溯报告，至少包含批次号、数据来源、总要素数、失败要素数、修复要素数、坐标系、执行人和发布时间。
+          </p>
           <pre><code>ogr2ogr \
   -f "PostgreSQL" PG:"host=db.example.com dbname=gis user=etl" \
   ./data/parcels.geojson \
@@ -205,6 +265,33 @@ CREATE INDEX parcels_land_use_idx ON parcels (land_use);</code></pre>
           </div>
           <pre><code>GET /tiles/{layer}/{z}/{x}/{y}.pbf
 Cache-Control: public, max-age=86400, stale-while-revalidate=604800</code></pre>
+          <h3>缩放级别建议</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>缩放级别</th>
+                <th>展示内容</th>
+                <th>处理策略</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>z0 - z8</td>
+                <td>行政区、主干道路、聚合指标</td>
+                <td>只输出概览数据，避免加载明细要素。</td>
+              </tr>
+              <tr>
+                <td>z9 - z13</td>
+                <td>街道、园区、业务区域</td>
+                <td>输出简化几何和核心属性。</td>
+              </tr>
+              <tr>
+                <td>z14+</td>
+                <td>地块、资产点、管线节点</td>
+                <td>输出高精度几何，并按权限过滤敏感字段。</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section id="api">
@@ -238,6 +325,17 @@ LIMIT 100;</code></pre>
     }
   ]
 }</code></pre>
+          <h3>错误响应约定</h3>
+          <pre><code>{
+  "error": {
+    "code": "INVALID_GEOMETRY",
+    "message": "请求范围不是合法 GeoJSON Polygon",
+    "request_id": "req_01J0GIS8N7YK"
+  }
+}</code></pre>
+          <p>
+            API 必须返回稳定的错误码和 <code>request_id</code>。前端展示用户可理解的提示，日志系统使用 <code>request_id</code> 追踪服务端异常。
+          </p>
         </section>
 
         <section id="performance">
@@ -249,6 +347,33 @@ LIMIT 100;</code></pre>
             <li>热点图层使用 CDN 缓存，API 查询使用短 TTL 缓存和用户权限维度隔离。</li>
             <li>超过 10 万要素的可视化应采用聚合、网格、热力或服务端切片。</li>
           </ul>
+          <h3>容量基线</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>场景</th>
+                <th>目标</th>
+                <th>建议措施</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>地图首屏</td>
+                <td>2 秒内完成核心图层可视化。</td>
+                <td>预加载底图、延迟加载低优先级业务图层。</td>
+              </tr>
+              <tr>
+                <td>附近查询</td>
+                <td>P95 小于 500ms。</td>
+                <td>使用 geography 索引、限制半径和返回数量。</td>
+              </tr>
+              <tr>
+                <td>切片服务</td>
+                <td>缓存命中率高于 85%。</td>
+                <td>CDN 缓存、热点预生成、图层版本化。</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section id="security">
@@ -299,14 +424,29 @@ LIMIT 100;</code></pre>
           </ul>
           <div class="callout">
             <strong>本页面部署方式：</strong>
-            当前技术文档是纯静态站点，可直接通过 Vercel CLI 发布，不依赖后端服务。
+            当前技术文档是纯静态站点，已连接 GitHub 与 Netlify；推送到 <code>main</code> 后会自动触发生产部署。
+          </div>
+        </section>
+
+        <section id="acceptance">
+          <h2>10. 验收清单</h2>
+          <p>
+            下列检查用于项目上线前确认 GIS 平台具备可交付、可回滚、可观测的生产条件。
+          </p>
+          <div class="checklist">
+            <label><input type="checkbox" /> 坐标系、数据字典、图层编码和字段含义已经冻结。</label>
+            <label><input type="checkbox" /> 关键空间表已建立 GiST 索引，并通过慢查询压测。</label>
+            <label><input type="checkbox" /> 矢量切片样式在桌面端、移动端和不同缩放级别完成验收。</label>
+            <label><input type="checkbox" /> API 具备统一错误码、请求追踪 ID、权限过滤和审计日志。</label>
+            <label><input type="checkbox" /> 生产环境配置、Token、数据库连接串均未写入源码仓库。</label>
+            <label><input type="checkbox" /> 已配置备份、监控、告警和发布回滚流程。</label>
           </div>
         </section>
       </article>
     </main>
 
     <footer class="footer">
-      <span>GIS 平台技术文档 v1.0</span>
+      <span>GIS 平台技术文档 v1.1</span>
       <span>适合用作项目启动文档、方案评审材料或团队内部知识库首页。</span>
     </footer>
   </body>
